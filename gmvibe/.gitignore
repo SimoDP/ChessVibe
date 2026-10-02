@@ -1,0 +1,20 @@
+# Segreti e dati utente: MAI nel repo (documentazione.txt §4.4)
+profiles/
+*.env
+!.example.env
+secrets.example.env
+
+# Ambiente / build
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Dati locali
+*.db
+*.db-wal
+*.db-shm
+gmvibe/data/openings/

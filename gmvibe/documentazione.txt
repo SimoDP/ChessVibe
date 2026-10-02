@@ -1,0 +1,541 @@
+# PROGETTO "GM-Vibe" — Analisi scacchistica di livello magistrale
+
+> **Istruzione per l'AI di sviluppo (Claude Code / Cursor):** leggi tutto il file, poi lavora **una fase alla volta** nell'ordine della sezione 10. Non passare alla fase successiva finché i criteri di accettazione della fase corrente non sono verificati con test. Chiedi conferma prima di cambiare lo stack o l'ordine delle fasi.
+
+---
+
+## 1. Visione e principio guida
+
+**Obiettivo unico:** produrre, a fine partita, un'analisi che un giocatore da ~1900 FIDE (o più) trovi **più utile e più precisa** di quella di chess.com e lichess.org.
+
+Le analisi commerciali hanno tre limiti che questa app deve superare:
+
+1. **Sono livello-agnostiche.** Spiegano a tutti allo stesso modo. Qui ogni frase è calibrata su chi sa già cos'è una colonna aperta, un avamposto, un cambio di struttura.
+2. **Dicono *cosa* è sbagliato, non *perché lo hai giocato* né *come evitarlo*.** Il valore sta nella diagnosi: errore tattico, di valutazione, di piano, di tempo, di tecnica.
+3. **Analizzano partite isolate.** Un forte migliora correggendo i *pattern ricorrenti*, non le singole mosse.
+
+### Principio architetturale non negoziabile
+
+> **Il motore calcola, il codice deterministico misura, Claude spiega. Claude non calcola mai e non inventa mai varianti.**
+
+Gli LLM sbagliano le mosse di scacchi e allucinano varianti plausibili. Quindi:
+- Ogni numero (eval, WDL, accuratezza) viene da Stockfish o da formule nostre.
+- Ogni fatto posizionale (pedone isolato, avamposto, colonna aperta…) viene calcolato con `python-chess`, non dedotto da Claude.
+- Ogni mossa che Claude cita deve essere **validata** (legale nella posizione indicata) prima di mostrarla. Se non passa la validazione, l'output viene rigenerato o scartato.
+
+---
+
+## 2. Priorità: l'analisi viene PRIMA del gioco
+
+La bozza originale partiva dal wrapper Lichess. Dato che l'unico obiettivo è l'analisi, l'ordine corretto è invertito:
+
+| Priorità | Componente | Perché |
+|---|---|---|
+| **P0** | Pipeline di analisi da PGN (CLI) | È il prodotto. Testabile subito con le tue partite. |
+| **P0** | Layer LLM con validazione | Il differenziatore. |
+| **P1** | UI di review (scacchiera interattiva + report) | Rende l'analisi usabile. |
+| **P1** | Import partite (Lichess, Chess.com, PGN OTB) | Dati reali da analizzare. |
+| **P2** | Profilo giocatore cross-partita + puzzle dai tuoi errori | Dove si batte davvero chess.com. |
+| **P3** | Gioco live su Lichess (Board API) | Comodo, ma non è l'obiettivo. Solo dopo. |
+
+---
+
+## 3. Stack tecnologico
+
+- **Linguaggio:** Python 3.11+
+- **Scacchi:** `python-chess` (board, PGN, UCI, tablebase Syzygy, polyglot)
+- **Motore:** Stockfish, ultima versione stabile, locale, con NNUE (configurabile: path, `Threads`, `Hash`)
+- **Lichess:** `berserk` + chiamate HTTP dirette dove serve (Opening Explorer, tablebase)
+- **Chess.com:** API pubbliche (solo lettura: archivi PGN mensili)
+- **LLM:** SDK `anthropic`. Modelli **configurabili da `.env`**, non hardcoded:
+  - `ANTHROPIC_MODEL_DEEP` (default `claude-opus-5-5`) per la spiegazione dei momenti critici
+  - `ANTHROPIC_MODEL_FAST` (default `claude-sonnet-5-5`) per classificazioni e sintesi
+  - Usare **prompt caching** sul system prompt (è lungo e identico a ogni chiamata) e **output strutturato JSON**.
+- **Backend web:** FastAPI + WebSocket
+- **Frontend:** HTML/JS leggero con **Chessground** (la scacchiera di Lichess) + `chess.js` per la legalità lato client. Nessun framework pesante.
+- **Persistenza:** SQLite (cache analisi condivisa, partite e profili con `user_id`)
+- **Segreti:** file `.env` per profilo (git-ignored) o `keyring` del sistema operativo; hash `argon2`/`bcrypt` solo se si introduce un login
+- **Task asincroni:** `asyncio` + coda semplice in-process (niente Celery)
+- **Test:** `pytest`
+
+Opzionali ma consigliati (vedi sezione 5):
+- **Tablebase Syzygy** locali (almeno 5 pezzi) per verdetti esatti nei finali
+- **Maia / Maia-2** (modelli di gioco umano, scelti in base al livello dell'utente, vedi 4.2) per stimare "quanto è naturale" un errore per un umano di quel livello
+
+---
+
+## 4. Multi-utente, livello e credenziali
+
+**Principio:** nessun dato personale o numero di Elo scritto nel codice. L'app deve poter essere data a un amico (magari un 2200) che la installa sul suo PC, inserisce i suoi dati e ottiene un'analisi calibrata su di lui.
+
+### 4.1 Un profilo per utente
+
+Ogni utente ha una cartella `profiles/<nickname>/` con tre cose: il profilo, i segreti, i dati. Il **profilo non contiene mai segreti** e può essere condiviso o copiato.
+
+```yaml
+# profiles/simo/profile.yaml
+nickname: "simo"
+lingua_report: it
+rating: 1900                 # l'unico dato obbligatorio per la calibrazione
+rating_tipo: fide            # fide | lichess | chesscom | altro
+cadenza_preferita: blitz     # blitz | rapid | classica
+account:
+  lichess: "..."             # solo username
+  chesscom: "..."            # solo username
+repertorio:
+  bianco: ["1.e4"]
+  nero_vs_e4: ["Siciliana Najdorf"]
+  nero_vs_d4: ["..."]
+debolezze_dichiarate: ["finali di torre", "zeitnot"]
+```
+
+I dati dell'utente (partite, errori, puzzle, profilo di debolezze) stanno in SQLite con una colonna `user_id` su tutte le tabelle, così più profili convivono senza mescolarsi. La **cache delle analisi del motore è condivisa**: una posizione (FEN, depth, multipv, versione motore) vale per tutti.
+
+### 4.2 Il livello cambia l'analisi (`levels.yaml`)
+
+Dal rating inserito dall'utente l'app ricava automaticamente un `LevelConfig` (sezione 4.3). Il file `levels.yaml` definisce **tutto ciò che dipende dal livello**:
+
+| Parametro | Cosa cambia con il livello |
+|---|---|
+| Soglie di errore (win%) | Più strette per i forti: a 2300 conta un'imprecisione che a 1500 è rumore |
+| Modello Maia | Quello più vicino al rating dell'utente (vedi sotto) |
+| Soglia "mossa naturale" | Se un errore ha alta probabilità per quel livello, è "naturale" e va spiegato come regola di pensiero |
+| Numero di momenti critici | Meno e più sottili per i forti, qualcuno in più per fasce basse |
+| Tono del prompt | `{rating_display}` e un descrittore di livello iniettati nel system prompt: cosa si può dare per scontato e cosa no |
+| Filtro teoria | Quanto in profondità si confronta con l'Opening Explorer |
+
+Il file contiene **punti di ancoraggio** (es. 1400, 1700, 2000, 2300) con i valori di ogni parametro; tra un punto e l'altro l'app interpola (sezione 4.3). L'app è pensata per giocatori forti: sotto i ~1400 è supportata ma non è l'obiettivo del progetto.
+
+**Maia e i livelli alti.** I pesi Maia originali per Lc0 coprono fasce di rating umano fino a circa 1900. Per un utente da 2200:
+1. Preferire **Maia-2**, modello condizionato sul rating (si imposta il rating di chi gioca e dell'avversario), che copre fasce più alte. *Verificare il range di rating realmente supportato prima di usarlo.*
+2. In alternativa usare il bucket più alto disponibile e **dichiararlo nel report** ("stima conservativa: il modello non copre il tuo livello").
+3. Se Maia non è installato, la funzione si disattiva e il Complexity Score usa solo i fattori 1-4 della sezione 5.H. Maia è sempre opzionale.
+
+La selezione del modello è parte di `resolve_level` (sezione 4.3).
+
+### 4.3 Calibrazione automatica dall'Elo
+
+L'utente inserisce **solo il rating, il tipo di rating (FIDE, Lichess, Chess.com, altro) e la cadenza preferita**. Il software fa il resto, senza che l'utente tocchi un solo parametro. Se fornisce lo username Lichess, il wizard legge dal profilo pubblico i rating per cadenza e propone il valore giusto.
+
+Tutto passa da una **funzione pura**: `resolve_level(profile, levels_config) -> LevelConfig`.
+
+1. **Normalizzazione su scala Lichess.** Maia è addestrato su partite Lichess, quindi un rating FIDE o Chess.com va convertito: `to_lichess_scale(rating, tipo, cadenza)`. Le scale non coincidono e la differenza dipende anche dalla cadenza, perciò la tabella di conversione sta in `rating_conversion.yaml`, **modificabile e marcata come stima approssimativa**; i valori vanno compilati da fonti verificate, non inventati. Se l'utente ha un rating Lichess reale per quella cadenza, ha sempre la priorità sulla conversione.
+2. **Scelta del modello Maia** (sempre opzionale):
+   - **Maia-2**: riceve direttamente il rating in scala Lichess dell'utente e quello dell'avversario letto dagli header PGN (`WhiteElo`/`BlackElo`). Nessun bucket.
+   - **Maia originale**: bucket più vicino (multipli di 100, limitati al range disponibile). Fuori range si usa il bucket estremo e si segna `extrapolated = true`.
+   - **Nessun Maia installato**: la funzione si disattiva e il Complexity Score usa solo i fattori 1-4.
+3. **Parametri continui, non fasce rigide.** Soglie di errore, numero di momenti critici, soglia di "mossa naturale" e profondità del confronto con la teoria si calcolano per **interpolazione lineare** tra i punti di ancoraggio di `levels.yaml`. Un 1950 e un 2250 ottengono quindi valori diversi e coerenti. Il `descrittore_livello` del prompt viene dal punto di ancoraggio più vicino.
+4. **Trasparenza.** Il `LevelConfig` risultante viene salvato con ogni analisi e il report mostra una riga di calibrazione, ad esempio: rating inserito, scala convertita, modello Maia scelto, flag `estimated`/`extrapolated`. Così ogni analisi è riproducibile e l'utente capisce da dove vengono i parametri.
+5. **Ricalibrazione suggerita (non automatica).** Quando importa molte partite, se l'accuratezza media si discosta in modo netto da quella attesa per il rating dichiarato, l'app **suggerisce** di aggiornare il rating. Non lo cambia da sola: con poche partite la stima è rumorosa.
+
+**Test obbligatori su `resolve_level`:**
+- Monotonia: a rating più alto le soglie di errore non diventano più larghe.
+- Casi limite: rating 1100, 1900, 2200, 2600, 3000 e valori invalidi.
+- Determinismo: stesso input, stesso `LevelConfig`.
+- Priorità del rating Lichess reale sulla conversione.
+- Flag `estimated` e `extrapolated` impostati correttamente.
+
+### 4.4 Credenziali: cosa serve davvero (e cosa NO)
+
+La richiesta "nickname, email, password" va distinta per scopo. Regola generale: **l'app non chiede e non salva mai la password di Lichess o Chess.com.**
+
+| Servizio | Cosa serve | Note |
+|---|---|---|
+| **Lichess** | **Personal Access Token** | Mai password. Per importare le tue partite spesso basta lo username (sono pubbliche). Il token (scope `board:play`) serve solo per il gioco live (P3) |
+| **Chess.com** | Solo **username** | API pubbliche in sola lettura |
+| **Anthropic** | **API key** personale | Ogni utente usa la propria, altrimenti i costi ricadono su chi distribuisce l'app |
+| **Login dell'app** | Nickname (+ password solo se serve) | Vedi sotto |
+
+**Login dell'app: serve davvero?**
+- **Uso locale** (tu e il tuo amico, ognuno sul proprio PC): **nessun login.** Basta scegliere il profilo all'avvio. Email e password sarebbero complessità inutile.
+- **Server condiviso raggiungibile da altri**: allora sì, login con nickname e password. In quel caso la password si salva **solo come hash** (`argon2` o `bcrypt`), mai in chiaro. L'email è opzionale e ha senso solo con una funzione di recupero password.
+
+**Dove stanno i segreti:**
+- File `profiles/<nickname>/secrets.env` (o `credentials.yaml`), **nel `.gitignore`**, con permessi ristretti (`chmod 600`). Nel repo c'è solo `secrets.example.env` con i nomi dei campi:
+  ```
+  ANTHROPIC_API_KEY=
+  LICHESS_TOKEN=
+  ```
+- In alternativa, più sicuro: il keyring del sistema operativo (libreria `keyring`), con il file `.env` come fallback.
+- **Mai** mettere password o token in `profile.yaml`, nei log, nel database o nei messaggi d'errore (mascherare i segreti nei log).
+
+### 4.5 Primo avvio: wizard di configurazione
+
+`python -m gmvibe init` guida l'utente passo per passo e scrive profilo e segreti:
+1. Nickname e lingua del report
+2. Rating, tipo di rating (FIDE / Lichess / Chess.com) e cadenza preferita → `resolve_level` calcola in automatico scala, modello Maia e parametri; il wizard mostra il risultato per conferma
+3. Username Lichess / Chess.com (facoltativi)
+4. API key Anthropic e, se vuole giocare live, token Lichess
+5. Rilevamento di Stockfish (e, se presenti, Syzygy e Maia); se mancano, istruzioni di installazione chiare
+6. Test finale: analizza una partita d'esempio inclusa nel repo e mostra il report
+
+Distribuzione ad un amico: `README` con installazione in 5 comandi (o un `Dockerfile` più avanti). La pipeline non deve avere nessun path o username scritto a mano.
+
+---
+
+## 5. Pipeline di analisi (cuore del progetto)
+
+```
+PGN → [A] Parsing + clock → [B] Pass veloce → [C] Selezione candidati
+    → [D] Pass profondo → [E] Feature posizionali → [F] Classificazione errori
+    → [G] Momenti critici → [H] LLM + validazione → [I] Report
+```
+
+### A. Parsing
+- Estrai mosse, header, apertura, risultato, controllo del tempo.
+- **Estrai i tempi** (`[%clk]`) per ogni mossa: Lichess li include nell'export con `clocks=true`. Servono per l'analisi del tempo (sezione 5.J).
+- Nome apertura dal dataset `lichess-org/chess-openings` (TSV su GitHub), non da Claude.
+
+### B. Pass veloce (tutte le posizioni)
+- Profondità ~14 o ~0.3 s/posizione, `MultiPV=1`, WDL attivo (`UCI_ShowWDL`).
+- Scopo: curva di valutazione dell'intera partita in pochi secondi, e individuazione dei salti.
+
+### C. Selezione candidati
+Passano al pass profondo:
+- tutte le mosse del giocatore con calo di win% sopra una soglia bassa;
+- le posizioni dove l'eval è vicina a un cambio di verdetto (vinto→patta, patta→perso);
+- le transizioni di fase (cambio donne, ingresso nel finale);
+- le posizioni in cui il giocatore ha impiegato molto tempo o pochissimo.
+
+### D. Pass profondo (solo candidati)
+- Profondità 22–26 o 5–10 s, `MultiPV=4`.
+- **Valuta sempre la mossa effettivamente giocata**, anche se non è tra le prime 4: usa `analyse(..., root_moves=[mossa_giocata])` di `python-chess`.
+- Salva anche l'eval a profondità bassa (es. d10) e profonda (d24): la **differenza** serve per misurare la "trappolosità".
+- **Cache in SQLite** con chiave `(FEN, depth, multipv, versione_motore)`: la stessa posizione non si ricalcola mai.
+
+> Nota realistica: depth 20 su 80 semimosse non richiede 10-15 secondi ma più probabilmente 1-3 minuti, a seconda della CPU. Il design a due passate serve proprio a rendere il tempo prevedibile.
+
+### E. Metriche di base (formule esplicite, tutte configurabili)
+
+Usare la **win probability** invece dei centipedoni: un -1.5 in una posizione +8 non è un errore reale, in una posizione 0.00 sì.
+
+```
+win%(cp) = 50 + 50 * (2 / (1 + exp(-0.00368208 * cp)) - 1)
+```
+
+- **Perdita della mossa** = `win%(prima) − win%(dopo)` dal punto di vista di chi muove.
+- **Soglie di classificazione**: ispirate a Lichess, ma in un file di config e modificabili (iniziare con imprecisione ≈ 5 punti percentuali, errore ≈ 10, svarione ≈ 15, poi calibrare sulle tue partite).
+- **Accuratezza** per partita e **per fase** (apertura / mediogioco / finale), con la formula usata da Lichess:
+  `accuracy = 103.1668 * exp(-0.04354 * perdita_win%) − 3.1669`
+- Gestire a parte i matti (`Mate in N`) e le posizioni già decise (>95% o <5%: non segnalare errori irrilevanti).
+
+### F. Feature posizionali (deterministiche, con `python-chess`)
+
+Per ogni posizione critica calcola un "fact sheet" strutturato per entrambi i lati. **Claude riceve questi fatti, non deve indovinarli.**
+
+- Materiale e squilibri (coppia di alfieri, qualità, alfieri di colore opposto)
+- Struttura pedonale: isolati, doppiati, arretrati, passati, catene, IQP, pedoni sospesi
+- Colonne aperte / semiaperte e chi le controlla
+- Case deboli e **avamposti** (case non attaccabili da pedoni avversari, occupate o occupabili da un cavallo)
+- Sicurezza del Re: scudo di pedoni, pezzi attaccanti vicini, arrocco sì/no
+- Attività dei pezzi: mobilità, pezzi "cattivi" (alfiere bloccato dai propri pedoni), torri sulla settima
+- Spazio e centro
+- Cambiamento delle feature tra posizione prima e dopo la mossa (es. "ha creato un pedone isolato in d5")
+
+> Non basarsi sul comando `eval` di Stockfish per questo: l'output cambia tra versioni. Meglio le feature calcolate da noi.
+
+### G. Classificazione della *natura* dell'errore
+
+Per ogni errore assegna un'etichetta (prima in modo euristico/deterministico, poi eventualmente raffinata dall'LLM):
+
+| Etichetta | Segnali |
+|---|---|
+| `tattica_mancata` | La linea migliore del motore inizia con catture/scacchi/forzanti entro 4 semimosse, e l'eval a bassa profondità non la vedeva |
+| `pezzo_in_presa` / `svista` | La mossa lascia un pezzo catturabile gratis |
+| `valutazione_errata` | Cambio o sacrificio giocato sulla base di una valutazione sbagliata (es. finale perso) |
+| `piano_sbagliato` | Nessuna tattica: l'eval scende lentamente, la struttura peggiora |
+| `profilassi_mancata` | La mossa migliore era una mossa silenziosa che impediva un piano avversario |
+| `sicurezza_re` | Variazione forte delle feature del Re |
+| `tecnica_conversione` | Posizione vinta (>80%) che diventa patta/persa |
+| `tecnica_difesa` | Posizione peggiore ma tenibile persa |
+| `finale_tecnica` | Errore in finale, confermato dalle tablebase quando possibile |
+| `tempo` | Errore con meno di X secondi sul clock, o troppo tempo speso su una mossa banale |
+| `teoria` | Uscita dalla teoria con perdita misurabile (confronto con Opening Explorer) |
+
+### H. Complexity Score (versione migliorata)
+
+La bozza lo definiva solo come "differenza tra prima e seconda mossa". Meglio un punteggio composto, ognuno con un peso in config:
+
+1. **Gap** tra la migliore e la seconda mossa (in win%).
+2. **Numero di mosse "ragionevoli"**: quante mosse stanno entro ~5 punti di win% dalla migliore. Poche = posizione di "solo mossa".
+3. **Instabilità in profondità**: la mossa migliore a d10 è diversa da quella a d24, o l'eval oscilla molto.
+4. **Controintuitività**: la mossa migliore è silenziosa, un ritiro, un sacrificio, o va contro l'euristica "cattura/attacca".
+5. *(Opzionale, molto potente)* **Probabilità umana con Maia**: la probabilità che un giocatore del **livello dell'utente** (modello scelto da `resolve_level`, sezione 4.3) giochi la mossa effettivamente giocata. Se un errore ha alta probabilità Maia, è un errore "naturale" da correggere con una regola di pensiero; se ha bassa probabilità è una svista.
+
+Output: un punteggio 0–100 e una spiegazione sintetica dei fattori che lo compongono, passata a Claude.
+
+### I. Rilevatore di momenti critici
+
+Seleziona **al massimo 5–7 momenti** per partita, ordinati per impatto. Categorie:
+
+- **Punto di svolta** — il vantaggio cambia di almeno una soglia significativa in win%.
+- **Errore indotto** — errore in posizione ad alto Complexity Score (l'avversario ha giocato bene a creare problemi).
+- **Mossa eccellente** — il giocatore trova una "solo mossa" o una mossa controintuitiva: va **sempre riconosciuta**, un buon allenatore dice anche cosa hai fatto bene.
+- **Occasione mancata** — vantaggio tattico/posizionale non sfruttato.
+- **Transizione strategica** — cambio donne, formazione di una struttura pedonale permanente, ingresso nel finale.
+- **Uscita dalla teoria** — prima mossa che si discosta dal database con risultato peggiore.
+
+Ogni momento è un oggetto JSON con: FEN prima, mossa giocata (SAN+UCI), top-4 linee con eval, WDL, fact sheet, delta delle feature, etichetta d'errore, Complexity Score, tempo sul clock e tempo speso.
+
+### J. Analisi del tempo
+- Grafico clock vs valutazione: dove hai speso tempo, dove sei finito in zeitnot, dove hai sbagliato a clock alto o basso.
+- Mosse banali pensate troppo; mosse critiche giocate troppo in fretta.
+- Particolarmente importante nel blitz; per le partite OTB a cadenza lunga si adatta la logica (niente soglie di zeitnot da 3+0).
+
+### K. Finali con tablebase
+- Con ≤ 5 pezzi: **Syzygy locali** (python-chess `chess.syzygy`). Fino a 7 pezzi: API tablebase di Lichess.
+- Il report dice il verdetto esatto (vinto/patta/perso, DTZ) e la mossa che ha cambiato il risultato. "Patta teorica" non deve mai essere dedotto da Claude: deve venire da qui.
+
+### L. Opening Explorer
+- Interroga l'Opening Explorer di Lichess (database master e database Lichess) per sapere dove la partita esce dalla teoria e con quali statistiche. *(Verificare i requisiti di autenticazione correnti dell'API: potrebbe richiedere il token.)*
+- Confronta con il **tuo** repertorio (da `player_profile.yaml` e dalle tue partite passate): "qui hai deviato dalla tua linea abituale".
+
+---
+
+## 6. Layer LLM: "il Maestro virtuale"
+
+### 6.1 Cosa riceve Claude
+Un pacchetto JSON con: header partita, apertura (nome + uscita dalla teoria), i soli momenti critici (sezione 5.I) con tutti i dati sopra, profilo giocatore, statistiche di fase e di tempo, eventuali pattern ricorrenti dalle partite precedenti (sezione 7). **Mai il PGN intero senza dati motore.**
+
+### 6.2 Regole del prompt di sistema (da scrivere in `prompts/system_it.md`)
+
+```
+Sei un Grande Maestro e allenatore che analizza una partita per un giocatore di circa
+{rating_display} ({descrittore_livello}). Scrivi in {lingua_report}.
+
+REGOLE DI GROUNDING (inderogabili):
+1. Non calcoli. Usa SOLO le valutazioni, le linee e i fatti posizionali forniti.
+2. Ogni variante che citi deve essere una di quelle fornite oppure un'estensione
+   di al massimo 2 semimosse, indicata con il FEN di partenza. Non inventare altro.
+3. Se un dato non è fornito, dillo ("non ho dati su..."). Non indovinare.
+4. Non scrivere mai "patta teorica" o "finale vinto" se non è nel campo tablebase.
+
+REGOLE DI QUALITÀ:
+5. Livello alto: non spiegare concetti elementari. Vai al "perché" della mossa
+   del motore, al piano che nascondeva, all'idea che ti è sfuggita.
+6. Per ogni errore spiega: (a) cosa volevi fare, (b) cosa ti è sfuggito,
+   (c) perché la mossa migliore funziona, (d) quale REGOLA DI PENSIERO avrebbe
+   evitato l'errore (es. "prima di cambiare, valuta la struttura risultante").
+7. Distingui errore "naturale" (alta complessità / alta probabilità umana) da
+   svista pura. Non trattare allo stesso modo le due cose.
+8. Riconosci le mosse buone: "solo mosse" trovate, difese precise, buone idee.
+9. Niente frasi di riempimento, niente complimenti generici, niente elenchi di ovvietà.
+10. Tono: allenatore diretto e rispettoso, non scolastico.
+
+OUTPUT: solo JSON conforme allo schema fornito.
+```
+
+### 6.3 Output strutturato (non Markdown libero)
+
+Claude restituisce JSON secondo uno schema; il frontend lo renderizza. Struttura indicativa:
+
+```json
+{
+  "sintesi_partita": "3-4 frasi: com'è andata davvero, dove si è decisa",
+  "apertura": { "valutazione": "...", "deviazione": "...", "da_ripassare": "..." },
+  "momenti": [
+    {
+      "id": "m22",
+      "fen_prima": "...",
+      "mossa_giocata": "Nd4",
+      "mossa_migliore": "Rad8",
+      "titolo": "Il cambio che ha regalato la colonna c",
+      "tipo_errore": "valutazione_errata",
+      "spiegazione": "...",
+      "idea_del_motore": "...",
+      "regola_di_pensiero": "...",
+      "varianti_citate": [
+        { "fen_partenza": "...", "mosse_san": ["cxd4", "Rc8"], "commento": "..." }
+      ]
+    }
+  ],
+  "gestione_tempo": "...",
+  "fase_piu_debole": "mediogioco",
+  "lezione_finale": "...",
+  "da_allenare": ["...", "...", "..."]
+}
+```
+
+### 6.4 Validazione obbligatoria (`validator.py`)
+Dopo la risposta di Claude, il codice:
+1. Verifica che ogni variante in `varianti_citate` sia **legale** a partire dal `fen_partenza` (`python-chess`).
+2. Verifica che le mosse e i FEN citati esistano nei dati forniti.
+3. Se ci sono estensioni oltre le linee del motore, le fa **valutare a Stockfish** per controllare che il commento non contraddica i numeri.
+4. In caso di fallimento: rigenera **una volta** passando a Claude l'errore esatto di validazione; se fallisce ancora, mostra il momento con i soli dati del motore e un avviso, mai testo non verificato.
+
+Metrica di qualità da tracciare sempre: **% di varianti legali = 100%** (obiettivo non negoziabile).
+
+### 6.5 Modelli e costi
+- Un modello veloce per le classificazioni leggere e per la sintesi finale, il modello migliore per i 5–7 momenti.
+- Costo atteso per partita: nell'ordine di poche migliaia di token in input per momento. Il filtro di sezione 5.I serve anche a questo.
+
+---
+
+## 7. Il vero vantaggio su chess.com e lichess: l'analisi *cross-partita*
+
+Una singola partita insegna poco; i pattern insegnano molto. Memorizza in SQLite ogni errore con la sua etichetta (sezione 5.G) e produci un **profilo di debolezze** aggiornato:
+
+- Etichette più frequenti negli ultimi N partite (es. "tecnica_conversione: 7 su 20 partite")
+- Accuratezza per fase, per colore, per apertura, per cadenza
+- Errori in funzione del clock (sotto i 30 secondi, sopra i 2 minuti…)
+- Statistiche sul repertorio: quali linee ti fanno perdere
+- Evoluzione nel tempo: stai migliorando nei finali?
+
+Ogni report di partita include un riquadro **"Questo errore è già comparso in X partite precedenti"** quando si ripete un pattern.
+
+### 7.1 Generatore di esercizi dai tuoi errori
+- Ogni errore significativo diventa un **puzzle**: FEN + mossa/e corretta/e secondo il motore, con spiegazione.
+- Modalità ripasso a ripetizione dilazionata (semplice, tipo Leitner) dentro l'app.
+- Export in PGN/FEN e (opzionale) in formato importabile in Anki o come studio Lichess.
+
+---
+
+## 8. Moduli di contorno
+
+### 8.1 Import partite
+- **Lichess:** export delle partite con `clocks=true`, `opening=true`, `evals=false` (le valutazioni le facciamo noi).
+- **Chess.com:** API pubbliche degli archivi mensili (PGN).
+- **PGN manuale:** incolla o carica un file. **Importante per un giocatore FIDE: le partite OTB di torneo**, con cadenze lunghe, vanno analizzate con la stessa pipeline ma senza assumere zeitnot da blitz.
+
+### 8.2 Gioco live su Lichess (P3, ultimo)
+Usa la **Board API** di Lichess:
+- Autenticazione con Personal Access Token (scope `board:play`) da variabile d'ambiente.
+- Stream eventi (`/api/stream/event`), stream partita (`/api/board/game/stream/{id}`), invio mosse, resa, proposta di patta, abbandono.
+- Ricerca partita con `seek` (tempo, incremento, rated/casual).
+- **Limite noto:** la Board API non supporta bullet; blitz, rapid e classica sì. Rispettare i rate limit (se arriva un 429, aspettare e non martellare).
+- Sincronizzazione del clock lato client con i dati dello stream.
+
+### 8.3 Regola di fair play (inderogabile)
+> **Durante una partita live non deve esistere alcun accesso a motore, valutazioni o Claude.** L'analisi si sblocca **solo** dopo la fine della partita. Imporlo nel codice (flag di stato che disabilita tutti gli endpoint di analisi mentre `game_in_progress == true`). Usare un motore durante una partita rated viola le regole di Lichess e può portare al ban dell'account.
+
+### 8.4 "Modalità cooldown" (opzionale, dalla bozza originale)
+Dopo ogni partita il pulsante "Nuova partita" resta bloccato finché non hai letto il report (scroll fino in fondo o un breve quiz sul momento critico principale). Attivabile/disattivabile da configurazione.
+
+---
+
+## 9. Output: il report e la UI di review
+
+### 9.1 Struttura del report
+1. **Verdetto in 3 righe** + accuratezza totale e per fase.
+2. **Curva di valutazione** (win%) con i momenti critici marcati e, sotto, il grafico del tempo.
+3. **Apertura**: dove sei uscito dalla teoria, con statistiche reali e confronto col tuo repertorio.
+4. **Momenti critici** (5–7): per ciascuno mini-scacchiera con frecce (mossa giocata in rosso, migliore in verde), spiegazione, regola di pensiero.
+5. **Mosse buone** riconosciute.
+6. **Gestione del tempo**.
+7. **Finale** (con verdetto tablebase se applicabile).
+8. **Pattern ricorrenti** (sezione 7).
+9. **Da allenare**: 3 azioni concrete + i puzzle generati.
+
+### 9.2 Interazione
+- Scacchiera Chessground con la partita navigabile (frecce tastiera).
+- Click su una variante citata → la scacchiera riproduce la linea dalla posizione corretta.
+- Pulsante "gioca la mossa migliore e continua" per provare a mano la posizione critica contro il motore.
+- Tema scuro, pensato per essere letto dopo una partita, non per essere sfogliato velocemente.
+
+---
+
+## 10. Piano di sviluppo per fasi (con criteri di accettazione)
+
+Ogni fase finisce con **test automatici** e una breve demo da riga di comando. Non andare avanti se i criteri non sono soddisfatti.
+
+### FASE 1 — Motore e dati (solo CLI)
+*Prompt:* "Crea il pacchetto `gmvibe` con `config.py` (carica `profiles/<nickname>/profile.yaml`, `levels.yaml` e i segreti da `secrets.env`/keyring; nessun valore personale hardcoded), il comando `python -m gmvibe init` (wizard della sezione 4.5), `level.py` con `resolve_level` (sezione 4.3), `models.py` (Pydantic) e `engine/stockfish_runner.py` basato su `python-chess`. Implementa il parsing del PGN con i tempi `[%clk]`, il pass veloce (MultiPV=1, WDL) e la cache SQLite. Aggiungi `python -m gmvibe analyze partita.pgn` che stampa la tabella mossa per mossa con eval e win%."
+**Accettazione:** il wizard crea un profilo valido; due profili diversi (es. 1900 e 2200) producono `LevelConfig` diversi e i test di `resolve_level` passano; su 3 PGN di prova l'output è corretto; la seconda esecuzione sulla stessa partita è quasi istantanea (cache); ci sono test sulla formula win%.
+
+### FASE 2 — Pass profondo e metriche
+*Prompt:* "Implementa la selezione dei candidati, il pass profondo con MultiPV=4, la valutazione della mossa giocata via `root_moves`, la classificazione imprecisione/errore/svarione con soglie in config, l'accuratezza totale e per fase, e il Complexity Score composto."
+**Accettazione:** accuratezza coerente (±pochi punti) con quella mostrata da Lichess sulla stessa partita; la classificazione è riproducibile; test su posizioni "solo mossa" note.
+
+### FASE 3 — Feature posizionali e tipo di errore
+*Prompt:* "Implementa `features.py` con pedoni isolati/doppiati/arretrati/passati, avamposti, colonne aperte, sicurezza del Re, mobilità, coppia di alfieri, e il delta prima/dopo. Implementa `error_taxonomy.py` con le etichette della sezione 5.G."
+**Accettazione:** test unitari su FEN costruiti a mano per ogni feature (almeno 3 per feature); ogni errore ha un'etichetta.
+
+### FASE 4 — Tablebase, apertura, tempo
+*Prompt:* "Integra Syzygy locali, le API tablebase di Lichess per ≤7 pezzi, l'Opening Explorer, il dataset ECO per il nome dell'apertura e l'analisi del clock (sezione 5.J)."
+**Accettazione:** il report CLI mostra uscita dalla teoria, verdetto esatto nei finali con pochi pezzi e statistiche del tempo.
+
+### FASE 5 — Layer LLM con validazione
+*Prompt:* "Crea `ai_coach/` con client Anthropic (modelli da `.env`, prompt caching), `prompts/system_it.md` (sezione 6.2), schema JSON di output, e `validator.py` che controlla la legalità di ogni variante citata e rigenera una volta in caso di errore."
+**Accettazione:** su 10 partite 100% delle varianti citate sono legali; nessun momento mostrato senza validazione; log del costo in token per partita.
+
+### FASE 6 — Server e UI di review
+*Prompt:* "Crea un server FastAPI che serve una UI con Chessground. Pagina di review: curva di valutazione, lista dei momenti critici, scacchiera navigabile con frecce, click sulle varianti che le riproduce, rendering del JSON del coach nel layout della sezione 9."
+**Accettazione:** una partita analizzata si legge e si esplora interamente dal browser, senza usare la CLI.
+
+### FASE 7 — Import e profilo cross-partita
+*Prompt:* "Aggiungi l'import da Lichess (export con clock), da Chess.com (archivi mensili) e da file PGN. Salva tutti gli errori etichettati in SQLite, produci il profilo di debolezze della sezione 7 e il generatore di puzzle con ripasso a ripetizione dilazionata."
+**Accettazione:** analisi in batch delle ultime 20 partite; il report mostra "già comparso in X partite" dove pertinente.
+
+### FASE 8 — (Opzionale) Maia e gioco live
+*Prompt A:* "Integra Maia via Lc0 per la probabilità umana della mossa giocata e usala nel Complexity Score."
+*Prompt B:* "Crea il modulo `lichess_live/` con Board API (`berserk`), stream partita e mosse, e UI di gioco. Implementa il blocco fair play della sezione 8.3 con test che verificano che gli endpoint di analisi falliscano durante una partita in corso."
+**Accettazione:** non è possibile in alcun modo chiamare l'analisi durante una partita live.
+
+---
+
+## 11. Struttura del repository
+
+```
+gmvibe/
+├── CLAUDE.md                 # regole di progetto (vedi sotto)
+├── levels.yaml               # punti di ancoraggio dei parametri per livello
+├── rating_conversion.yaml    # conversione approssimativa FIDE/Chess.com → scala Lichess
+├── secrets.example.env       # solo i nomi dei campi, mai valori
+├── profiles/                 # git-ignored: un profilo per utente
+│   └── <nickname>/ (profile.yaml, secrets.env)
+├── pyproject.toml
+├── gmvibe/
+│   ├── config.py
+│   ├── level.py              # resolve_level, conversione rating, scelta Maia
+│   ├── models.py
+│   ├── db.py                 # SQLite + cache
+│   ├── engine/               # stockfish_runner, tablebase, maia
+│   ├── analysis/             # pipeline, metrics, features, error_taxonomy, critical_moments, time_analysis
+│   ├── sources/              # lichess_import, chesscom_import, pgn_loader, opening_explorer
+│   ├── ai_coach/             # client, prompts/, schema, validator
+│   ├── profile/              # weaknesses, puzzles
+│   ├── lichess_live/         # (P3) board API
+│   └── web/                  # FastAPI + static/ (Chessground)
+└── tests/
+    ├── fixtures/             # PGN e FEN di test
+    └── ...
+```
+
+### `CLAUDE.md` consigliato nel repo
+```
+- Il motore calcola, il codice misura, Claude spiega. Mai delegare calcolo scacchistico all'LLM.
+- Nessuna variante generata dall'LLM viene mostrata senza validazione di legalità.
+- Nessun accesso ad analisi durante partite live (fair play).
+- Tutte le soglie e i pesi vivono in config, non nel codice.
+- Ogni modulo nuovo ha test; i FEN di test sono in tests/fixtures.
+- Una fase alla volta; non iniziare la successiva senza i criteri di accettazione.
+- Token, chiavi e password solo in `secrets.env`/keyring, mai nel repo, nei log o nel DB. Non chiedere mai la password di Lichess/Chess.com: solo token.
+- Nessun Elo, username o path scritto nel codice: tutto viene dal profilo e da `levels.yaml`.
+- L'utente inserisce solo il rating: ogni parametro dipendente dal livello (incluso il modello Maia) passa da `resolve_level`, mai da scelte manuali sparse nel codice.
+- Ogni tabella dati utente ha `user_id`; la cache motore è condivisa.
+```
+
+---
+
+## 12. Come misurare se l'analisi è davvero "da invidiare"
+
+Non basta che sembri bella. Metriche concrete:
+
+1. **Legalità**: 100% delle varianti citate è legale (automatica).
+2. **Coerenza numerica**: nessuna affermazione del report contraddice i dati del motore (controlli automatici sui campi chiave).
+3. **Accuratezza vs Lichess**: la tua accuratezza per partita è vicina a quella di Lichess sulle stesse partite (sanity check della pipeline).
+4. **Test cieco**: prendi 5 tue partite, confronta il report GM-Vibe con l'analisi di chess.com/lichess e con un tuo giudizio (o quello di un istruttore/giocatore più forte). Per ogni momento critico chiediti: "questa spiegazione mi avrebbe fatto evitare l'errore?"
+5. **Test delle regole di pensiero**: dopo 20 partite, le etichette d'errore più frequenti diminuiscono?
+
+---
+
+## 13. Rischi e decisioni aperte
+
+- **Allucinazioni dell'LLM** → mitigate da grounding + validazione (sezione 6). È il rischio principale.
+- **Tempo di analisi** → mitigato da due passate e cache; configurare `Threads` e `Hash` in base alla macchina.
+- **Costi API** → mitigati dal filtro dei momenti critici, dal prompt caching e da due livelli di modello.
+- **Licenze**: Stockfish e Chessground sono GPL; per uso personale locale non è un problema, da rivalutare se un giorno distribuisci l'app.
+- **API esterne** (Lichess Explorer, tablebase, Chess.com) → gestire timeout, rate limit e cache locale.
+- **Segreti e condivisione dell'app** → mai password di servizi esterni, solo token; ogni utente usa la propria API key Anthropic; file segreti fuori da git.
+- **Maia oltre ~1900** → copertura incerta: usare Maia-2 o dichiarare nel report che la stima è conservativa.
+- **Decisione aperta:** applicazione solo web locale oppure impacchettata come desktop (Tauri/Electron) in seguito. Non influisce sulle fasi 1-7.

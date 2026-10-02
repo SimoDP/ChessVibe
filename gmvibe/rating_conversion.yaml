@@ -1,0 +1,33 @@
+# rating_conversion.yaml — conversione APPROSSIMATIVA verso la scala Lichess
+# (documentazione.txt §4.3.1). Maia e' addestrato su partite Lichess, quindi un rating
+# FIDE o Chess.com va convertito prima di scegliere il modello e interpolare i parametri.
+#
+# ATTENZIONE: i delta qui sotto sono STIME APPROSSIMATIVE e vanno compilati da fonti
+# verificate, non inventati. Le scale non coincidono e la differenza dipende anche dalla
+# cadenza. Se l'utente ha un rating Lichess REALE per quella cadenza, ha sempre la
+# priorita' sulla conversione (resolve_level NON applica questo file in quel caso).
+version: 1
+notes: >
+  delta = punti da AGGIUNGERE al rating dichiarato per ottenere l'equivalente in scala
+  Lichess. Segnaposto da rivedere con dati reali; ogni analisi che usa la conversione
+  viene marcata estimated=true e riportata nella riga di calibrazione.
+
+default_cadenza: rapid
+
+tables:
+  fide:
+    blitz:    {delta: 120}
+    rapid:    {delta: 80}
+    classica: {delta: 40}
+  chesscom:
+    blitz:    {delta: 90}
+    rapid:    {delta: 60}
+    classica: {delta: 30}
+  altro:
+    blitz:    {delta: 0}
+    rapid:    {delta: 0}
+    classica: {delta: 0}
+
+clamp:
+  min: 400
+  max: 3500

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GM-Vibe — review di una partita</title>
+  <!-- Asset vendorizzati localmente (FASE 6): l'app funziona offline. -->
+  <link rel="stylesheet" href="/static/vendor/chessground.base.css" />
+  <link rel="stylesheet" href="/static/vendor/chessground.brown.css" />
+  <link rel="stylesheet" href="/static/vendor/chessground.cburnett.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>GM-Vibe <span>· review</span></h1>
+    <nav class="tabs">
+      <button id="tabReview" class="tab active">Partita</button>
+      <button id="tabProfile" class="tab">Profilo &amp; Puzzle</button>
+      <button id="tabLive" class="tab">Gioca</button>
+    </nav>
+    <label class="muted" for="profile">Profilo</label>
+    <select id="profile"><option value="">— nessuno —</option></select>
+    <div class="spacer"></div>
+    <button id="loadExample" class="secondary">Esempio</button>
+  </header>
+
+  <div id="profileView" hidden>
+    <section class="panel">
+      <div class="nav" style="justify-content: space-between;">
+        <h2>Profilo di debolezze <span class="muted">(§7)</span></h2>
+        <div><label class="muted" for="window">Ultime</label>
+          <input id="window" type="number" min="1" value="20" style="width:5rem" />
+          <button id="loadProfile" class="primary">Aggiorna</button></div>
+      </div>
+      <div id="weakProfile" class="muted">Scegli un profilo e premi “Aggiorna”.</div>
+    </section>
+    <section class="panel">
+      <div class="nav" style="justify-content: space-between;">
+        <h2>Puzzle &amp; ripasso <span class="muted">(§7.1)</span></h2>
+        <div><button id="reloadPuzzles" class="secondary">Ricarica</button>
+          <button id="startReview" class="primary">Ripassa i dovuti</button></div>
+      </div>
+      <div id="puzzleReview" hidden>
+        <div id="puzzleBoard" class="cg-wrap"></div>
+        <div id="puzzleInfo" style="margin-top:10px;"></div>
+      </div>
+      <div id="puzzleList" class="muted" style="margin-top:12px;"></div>
+    </section>
+  </div>
+
+  <div id="liveView" hidden>
+    <section class="panel">
+      <h2>Gioca su Lichess <span class="muted">(§8.2)</span></h2>
+      <p id="fairplayBanner" class="muted">
+        Il blocco fair play è attivo: mentre giochi, <b>nessuna analisi</b> è possibile (§8.3).
+      </p>
+      <div class="nav" style="justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+        <div>
+          <label class="muted" for="liveMinutes">Minuti</label>
+          <input id="liveMinutes" type="number" min="1" step="1" value="5" style="width:4.5rem" />
+          <label class="muted" for="liveIncrement">Incremento</label>
+          <input id="liveIncrement" type="number" min="0" step="1" value="3" style="width:4rem" />
+          <label class="muted"><input id="liveRated" type="checkbox" /> rated</label>
+        </div>
+        <div>
+          <button id="liveSeek" class="primary">Cerca partita</button>
+          <button id="liveStop" class="secondary">Ferma</button>
+        </div>
+      </div>
+      <div class="status" id="liveStatus">Scegli il profilo (in alto) e premi “Cerca partita”.</div>
+    </section>
+    <section class="panel" id="liveBoardPanel" hidden>
+      <div id="liveBoard" class="cg-wrap"></div>
+      <div class="nav" style="justify-content: space-between;">
+        <span id="liveMeta" class="muted"></span>
+        <span>
+          <button id="liveResign" class="secondary">Resa</button>
+          <button id="liveDraw" class="secondary">Patta</button>
+          <button id="liveAbort" class="secondary">Abbandona</button>
+        </span>
+      </div>
+      <div id="liveMoves" class="muted" style="margin-top:8px;"></div>
+    </section>
+  </div>
+
+  <main id="reviewView">
+    <!-- Colonna scacchiera + grafici -->
+    <section id="boardCol">
+      <div class="panel">
+        <textarea id="pgn" rows="5" placeholder="Incolla qui un PGN (Lichess con %clk, PGN manuale, partita OTB)…"></textarea>
+        <div class="nav" style="justify-content: space-between;">
+          <span class="status" id="status">Incolla un PGN e premi “Analizza”.</span>
+          <button id="analyze" class="primary">Analizza</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div id="board" class="cg-wrap"></div>
+        <div class="nav">
+          <button id="first" title="Inizio">⏮</button>
+          <button id="prev" title="Indietro (←)">◀</button>
+          <span class="ply" id="plyLabel">—</span>
+          <button id="next" title="Avanti (→)">▶</button>
+          <button id="last" title="Fine">⏭</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Curva di valutazione</h2>
+        <div class="chart-wrap"><svg id="evalChart" class="eval-chart" preserveAspectRatio="none"></svg></div>
+        <h2 style="margin-top:14px;">Tempo per mossa</h2>
+        <div class="chart-wrap"><svg id="timeChart" class="time-chart" preserveAspectRatio="none"></svg></div>
+      </div>
+    </section>
+
+    <!-- Colonna report -->
+    <section id="reportCol">
+      <div class="panel" id="summaryPanel">
+        <h2>Verdetto</h2>
+        <div id="summary" class="muted">Nessuna partita analizzata.</div>
+      </div>
+      <div class="panel" id="openingPanel" hidden>
+        <h2>Apertura</h2>
+        <div id="opening"></div>
+      </div>
+      <div class="panel" id="momentsPanel" hidden>
+        <h2>Momenti critici</h2>
+        <div id="moments"></div>
+      </div>
+      <div class="panel" id="goodPanel" hidden>
+        <h2>Mosse buone</h2>
+        <div id="good"></div>
+      </div>
+      <div class="panel" id="timePanel" hidden>
+        <h2>Gestione del tempo</h2>
+        <div id="timeInfo"></div>
+      </div>
+      <div class="panel" id="endgamePanel" hidden>
+        <h2>Finale (tablebase)</h2>
+        <div id="endgame"></div>
+      </div>
+      <div class="panel" id="coachPanel" hidden>
+        <h2>Maestro virtuale</h2>
+        <div class="nav" style="justify-content: space-between;">
+          <span class="status" id="coachStatus"></span>
+          <button id="runCoach" class="primary">Analizza col Maestro</button>
+        </div>
+        <div id="coach" style="margin-top:12px;"></div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

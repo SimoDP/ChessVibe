@@ -1,0 +1,214 @@
+# levels.yaml — tutto cio' che dipende dal livello dell'utente (documentazione.txt §4.2/§4.3).
+#
+# I parametri continui (soglie di errore, numero di momenti critici, soglia di "mossa
+# naturale", profondita' del confronto con la teoria) si ottengono per INTERPOLAZIONE
+# LINEARE tra questi punti di ancoraggio. Sotto il primo / sopra l'ultimo si usa
+# l'anchor estremo e si marca extrapolated=true.
+#
+# Vincoli imposti dai test (test_level.py):
+#   - error_thresholds NON crescono al crescere del rating (piu' stretti per i forti)
+#   - critical_moments NON cresce al crescere del rating
+#   - natural_move_prob decresce (piu' difficile sorprendere un forte)
+version: 1
+notes: >
+  Valori di partenza da calibrare sulle partite reali. La struttura e' cio' che conta:
+  un 1950 e un 2250 devono ottenere LevelConfig diversi e coerenti.
+
+# Soglie di default (win% points) usate come riferimento iniziale (documentazione.txt §5.E).
+winpct_thresholds_default:
+  imprecisione: 5.0
+  errore: 10.0
+  svarione: 15.0
+
+# Pass veloce (documentazione.txt §5.B): curva dell'intera partita in pochi secondi.
+fast_pass:
+  multipv: 1
+  depth: 14
+  time: 0.3          # usato se depth e' null
+  use_wdl: true
+
+# Pass profondo (documentazione.txt §5.D): solo sui candidati, MultiPV=4.
+# Si usa il MODO A TEMPO (depth: null), non a profondita': a MultiPV=4 una posizione di
+# mediogioco a depth 24 richiede ~150s su questa classe di host (depth 22 ~35s, depth 20
+# ~17s), quindi un pass profondo a profondita' fissa non ha tempo prevedibile — che e'
+# proprio l'obiettivo del design a due passate. Con `time` ogni posizione e' limitata
+# (spec: 5-10s); a ~6s si raggiunge depth ~19, comunque piu' profondo del pass veloce (14).
+# Per tornare al modo a profondita' basta impostare `depth` (es. 22) e azzerare `time`.
+deep_pass:
+  multipv: 4
+  depth: null        # 22-26 se impostato; null = usa `time` (prevedibile)
+  time: 6.0          # secondi per posizione (spec §5.D: 5-10s)
+  low_depth: 10      # eval a bassa profondita' per misurare la "trappolosita'"
+  max_candidates: 16 # tetto al numero di posizioni approfondite (0 = nessun limite):
+                     # approfondisce prima i cali di win% maggiori, per tempo prevedibile
+
+# Selezione dei candidati al pass profondo (documentazione.txt §5.C).
+# ATTENZIONE: winpct_drop deve stare SOPRA il rumore del pass veloce (depth ~14 fa
+# oscillare una mossa buona di ~2-3 punti di win%); verdict_levels sono i CONFINI tra i
+# verdetti (vinto<->patta a 80, patta<->perso a 20), NON il centro della fascia di patta,
+# e una mossa e' candidata solo se li ATTRAVERSA. Con criteri piu' laschi quasi ogni
+# mossa diventava candidata e il pass profondo non finiva piu' (miniaturina di 7 mosse:
+# >7 minuti; partita combattuta: meta' delle mosse).
+candidate_selection:
+  winpct_drop: 5.0          # calo minimo di win% sopra cui una mossa e' candidata
+  verdict_levels: [80.0, 20.0]         # vinto<->patta, patta<->perso (attraversamento)
+  clock_high_seconds: 60.0  # tempo speso "molto" su una mossa
+  clock_low_seconds: 1.0    # tempo speso "pochissimo" (mossa istantanea)
+
+# Risorse del motore (§3). threads: 0 = tutti i core disponibili. Il pass profondo a
+# depth 22-26 su una singola thread e' il collo di bottiglia: parallelizzarlo accorcia
+# sensibilmente l'analisi. hash_mb: 0 = default del motore.
+engine:
+  threads: 0
+  hash_mb: 256
+
+# Complexity Score composto (documentazione.txt §5.H), fattori 1-4.
+complexity:
+  reasonable_margin_winpct: 5.0    # mosse "ragionevoli" entro questo margine dalla migliore
+  # gap e "mosse ragionevoli" pesano di piu': sono il cuore della difficolta' della mossa.
+  weights:
+    gap: 2.0
+    reasonable_moves: 2.0
+    instability: 1.0
+    counterintuitive: 1.0
+    maia: 1.0    # fattore 5 (Maia): entra solo se Maia e' installato (§5.H, FASE 8)
+
+# Finali con tablebase (documentazione.txt §5.K).
+tablebase:
+  enabled: true
+  syzygy_path: null          # cartella Syzygy locale (opzionale); null = usa solo l'API
+  syzygy_max_pieces: 5
+  lichess_max_pieces: 7
+  allow_network: true
+
+# Opening Explorer di Lichess (documentazione.txt §5.L).
+opening_explorer:
+  enabled: true
+  use_masters: true
+  use_lichess: true
+  min_games: 5
+  allow_network: true
+
+# Analisi del tempo (documentazione.txt §5.J): soglie per cadenza.
+# Per le partite OTB a cadenza lunga NON si usano soglie di zeitnot da blitz.
+time_analysis:
+  enabled: true
+  profiles:
+    blitz:     {zeitnot_seconds: 15.0, banal_time_seconds: 60.0, critical_fast_seconds: 5.0}
+    rapid:     {zeitnot_seconds: 30.0, banal_time_seconds: 120.0, critical_fast_seconds: 10.0}
+    classica:  {zeitnot_seconds: null, banal_time_seconds: 300.0, critical_fast_seconds: 30.0}
+
+# Natura dell'errore (documentazione.txt §5.G): soglie della tassonomia.
+error_taxonomy:
+  zeitnot_seconds: 15.0          # sotto: l'errore e' "da tempo"
+  banal_time_seconds: 120.0      # troppo tempo su una mossa banale -> "da tempo"
+  banal_winpct_margin: 5.0       # mossa "banale" se la perdita attesa e' sotto questo
+  king_safety_delta: 2           # variazione dello scudo del Re -> sicurezza_re
+  conversion_winpct: 80.0        # vinto sopra -> tecnica_conversione se crolla
+  defense_winpct_band: 20.0      # sotto 50 ma sopra questa -> difesa tenibile
+  forcing_plies: 4               # semimosse forzanti per "tattica_mancata"
+
+# Posizioni gia' decise: non si segnalano errori irrilevanti (documentazione.txt §5.E).
+classification:
+  decided_winpct_high: 95.0    # sopra: vinto schiacciante
+  decided_keep_winning: 90.0   # se resta sopra, l'errore e' irrilevante
+  decided_winpct_low: 5.0      # sotto: gia' perso
+
+anchors:
+  - rating: 1400
+    error_thresholds: {imprecisione: 7.0, errore: 14.0, svarione: 22.0}
+    critical_moments: 7
+    natural_move_prob: 0.55
+    theory_depth: 8
+    descrittore_livello: "giocatore di club in crescita"
+    maia_bucket: 1400
+  - rating: 1700
+    error_thresholds: {imprecisione: 6.0, errore: 12.0, svarione: 18.0}
+    critical_moments: 6
+    natural_move_prob: 0.50
+    theory_depth: 10
+    descrittore_livello: "giocatore di club solido"
+    maia_bucket: 1700
+  - rating: 2000
+    error_thresholds: {imprecisione: 4.5, errore: 9.0, svarione: 14.0}
+    critical_moments: 6
+    natural_move_prob: 0.42
+    theory_depth: 12
+    descrittore_livello: "candidato maestro"
+    maia_bucket: 1900
+  - rating: 2300
+    error_thresholds: {imprecisione: 3.0, errore: 6.0, svarione: 10.0}
+    critical_moments: 5
+    natural_move_prob: 0.35
+    theory_depth: 15
+    descrittore_livello: "maestro/IM"
+    maia_bucket: 1900
+
+# Maia e' OPZIONALE (documentazione.txt §4.2): se non e' installato la funzione si
+# disattiva. In FASE 1 si seleziona solo nome/bucket del modello; l'esecuzione e' FASE 8.
+maia:
+  enabled: true
+  # Copertura reale dichiarata da Maia originale ~ fino a 1900 (in FASE 8 verificata:
+  # Maia-2 copre l'intero range ed e' preferito quando i pesi sono presenti).
+  maia1_buckets: [1100, 1300, 1500, 1900]
+  # Esecuzione (FASE 8). OPZIONALE: se lc0/weights mancano il fattore 5 si disattiva e
+  # il Complexity Score resta quello dei fattori 1-4. Nessun path hardcoded (CLAUDE.md):
+  # lc0_path=null -> env GMVIBE_LC0, poi PATH. I pesi non sono nel repo (troppo grandi).
+  lc0_path: null
+  weights_dir: null              # es. ~/.local/share/maia
+  weights_pattern: "maia-{bucket}.pb.gz"
+  lc0_args: ["--verbose-move-stats"]   # la policy si legge da stderr
+  nodes: 1                       # policy a 1 nodo (basta la testa di policy)
+  time: null
+  hard_move_prob: 0.10           # sotto questa probabilita' umana la mossa e' "difficile"
+
+# Gioco live su Lichess (§8.2) e modalita' cooldown (§8.4). Il blocco fair play (§8.3)
+# NON e' configurabile: e' imposto dal codice.
+live:
+  enabled: true
+  default_minutes: 5.0
+  default_increment: 3
+  default_rated: false           # casual di default; il rated richiede lo scope board:play
+  cooldown_enabled: false        # §8.4: opzionale
+
+# Layer LLM (§6). I modelli si possono sovrascrivere da .env:
+#   GMVIBE_COACH_MODEL / GMVIBE_COACH_MODEL_FAST (vedi ai_coach/anthropic_client.py).
+coach:
+  enabled: true
+  # Provider del layer LLM: "anthropic" (SDK diretto) o "openrouter" (gateway, qualunque
+  # modello). Override da ambiente: GMVIBE_COACH_PROVIDER.
+  provider: openrouter
+  # §6.5: il modello migliore per i 5-7 momenti, uno veloce per le sintesi leggere.
+  model_main: claude-opus-4-8
+  model_fast: claude-haiku-4-5
+  max_moments: 7          # §5.I: al massimo 5-7 momenti per partita
+  min_moments: 1
+  max_tokens_main: 8192
+  max_tokens_fast: 4096
+  regenerate_on_invalid: 1  # §6.4: una sola rigenerazione in caso di errore
+  use_structured_output: true
+  cache_enabled: true
+  timeout_seconds: 120.0
+  # Gateway OpenRouter (usato solo se provider: openrouter). Slug liberi, sovrascrivibili
+  # da GMVIBE_OPENROUTER_MODEL / GMVIBE_OPENROUTER_MODEL_FAST. Chiave: OPENROUTER_API_KEY.
+  openrouter:
+    base_url: https://openrouter.ai/api/v1
+    model_main: deepseek/deepseek-v4.1-flash
+    model_fast: deepseek/deepseek-v4.1-flash
+    site_url: ""            # opzionale: HTTP-Referer per la classifica OpenRouter
+    app_name: GM-Vibe
+    timeout_seconds: 120.0
+
+# Generatore di puzzle e ripasso dilazionato (documentazione.txt §7.1).
+# Le soglie vivono qui, mai nel codice (CLAUDE.md). La soluzione e' la mossa del motore.
+puzzles:
+  enabled: true
+  min_winpct_loss: 8.0                       # sotto: l'errore non merita un puzzle
+  max_per_game: 5
+  leitner_intervals_days: [1, 3, 7, 16, 35]  # box 1..5; l'ultimo = consolidato
+
+# Profilo di debolezze cross-partita (documentazione.txt §7).
+profile:
+  window_games: 20                           # "ultime N partite"
+  clock_buckets_seconds: [10.0, 30.0, 120.0]  # <10s, 10-30s, 30-120s, >120s
+  min_games_opening: 1

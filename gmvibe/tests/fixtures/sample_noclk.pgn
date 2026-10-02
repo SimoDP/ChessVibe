@@ -1,0 +1,13 @@
+[Event "GM-Vibe OTB fixture"]
+[Site "Torneo"]
+[Date "2026.09.15"]
+[Round "3"]
+[White "BiancoOTB"]
+[Black "NeroOTB"]
+[Result "*"]
+[WhiteElo "2200"]
+[BlackElo "2250"]
+[TimeControl "90m+30"]
+
+1. d4 Nf6 2. c4 g6 3. Nc3 Bg7 4. e4 d6 5. Nf3 O-O *
+

@@ -1,0 +1,13 @@
+[Event "GM-Vibe fixture"]
+[Site "Test"]
+[Date "2026.10.02"]
+[Round "1"]
+[White "BiancoTest"]
+[Black "NeroTest"]
+[Result "1-0"]
+[WhiteElo "1900"]
+[BlackElo "1850"]
+[TimeControl "300+0"]
+
+1. e4 { [%clk 0:05:00] } 1... e5 { [%clk 0:04:59] } 2. Nf3 { [%clk 0:04:57] } 2... Nc6 { [%clk 0:04:55] } 3. Bc4 { [%clk 0:04:53] } 3... d6 { [%clk 0:04:50] } 4. Nc3 { [%clk 0:04:48] } 4... Bg4 { [%clk 0:04:45] } 5. Nxe5 { [%clk 0:04:41] } 5... Bxd1 { [%clk 0:04:30] } 6. Bxf7+ { [%clk 0:04:25] } 6... Ke7 { [%clk 0:04:10] } 7. Nd5# { [%clk 0:04:05] } 1-0
+

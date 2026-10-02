@@ -1,0 +1,28 @@
+{
+  "games": [
+    {
+      "url": "https://www.chess.com/game/live/1",
+      "time_control": "180",
+      "end_time": 1756000000,
+      "rated": true,
+      "white": {"username": "t1900", "rating": 1900, "result": "win"},
+      "black": {"username": "avv_chesscom", "rating": 1870, "result": "checkmated"},
+      "pgn": "[Event \"Live Chess\"]\n[Site \"Chess.com\"]\n[Date \"2026.08.20\"]\n[White \"t1900\"]\n[Black \"avv_chesscom\"]\n[Result \"1-0\"]\n[TimeControl \"180\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0"
+    },
+    {
+      "url": "https://www.chess.com/game/live/2",
+      "time_control": "180",
+      "end_time": 1756000500,
+      "rated": false,
+      "white": {"username": "altro", "rating": 1700, "result": "resigned"},
+      "black": {"username": "t1900", "rating": 1900, "result": "win"},
+      "pgn": "[Event \"Live Chess\"]\n[Site \"Chess.com\"]\n[Date \"2026.08.21\"]\n[White \"altro\"]\n[Black \"t1900\"]\n[Result \"0-1\"]\n[TimeControl \"180\"]\n\n1. d4 d5 2. c4 e6 0-1"
+    },
+    {
+      "url": "https://www.chess.com/game/live/3",
+      "time_control": "180",
+      "white": {"username": "x", "rating": 1500},
+      "black": {"username": "y", "rating": 1500}
+    }
+  ]
+}

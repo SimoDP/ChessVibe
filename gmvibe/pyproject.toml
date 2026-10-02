@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gmvibe"
+version = "0.1.0"
+description = "GM-Vibe — analisi scacchistica di livello magistrale (CLI + UI di review)"
+requires-python = ">=3.11"
+dependencies = [
+    # Nota: il pacchetto PyPI "python-chess" ha versione distribuzione 1.999; il modulo
+    # `chess.__version__` riporta 1.11.2. API WDL/MultiPV/root_moves verificate su questa.
+    "python-chess==1.999",
+    "pydantic>=2.5",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "keyring>=24",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov", "httpx>=0.27"]
+# Layer LLM (§6, FASE 5): opzionale, così il resto funziona senza il pacchetto.
+llm = ["anthropic>=0.40"]
+# Server + UI di review (§9, FASE 6): FastAPI + uvicorn (niente websocket, si usa polling).
+web = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]
+
+[project.scripts]
+gmvibe = "gmvibe.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["gmvibe*"]
+
+[tool.setuptools.package-data]
+gmvibe = [
+    "data/openings_fallback.tsv",
+    "ai_coach/prompts/*.md",
+    "web/static/*.html",
+    "web/static/*.js",
+    "web/static/*.css",
+    "web/static/vendor/*",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: richiede un binario Stockfish reale",
+]
+testpaths = ["tests"]

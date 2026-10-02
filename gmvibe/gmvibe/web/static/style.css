@@ -1,0 +1,128 @@
+/* GM-Vibe — UI di review, tema scuro (§9.2). Pensata per essere letta dopo una
+   partita: colonna scacchiera sticky a sinistra, report scrollabile a destra. */
+
+:root {
+  --bg: #14161a;
+  --panel: #1c1f26;
+  --panel-2: #232733;
+  --ink: #e7e9ee;
+  --muted: #9aa3b2;
+  --line: #2e3440;
+  --accent: #7aa2f7;
+  --good: #6ccb5f;
+  --warn: #e0af68;
+  --bad: #f7768e;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+header h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
+header h1 span { color: var(--accent); }
+header .spacer { flex: 1; }
+
+select, button, textarea {
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+}
+button { cursor: pointer; }
+button.primary { background: var(--accent); color: #10131a; border-color: var(--accent); font-weight: 600; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+
+main {
+  display: grid;
+  grid-template-columns: minmax(320px, 460px) 1fr;
+  gap: 24px;
+  padding: 20px;
+  align-items: start;
+}
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+#boardCol { position: sticky; top: 76px; }
+#board { width: 100%; aspect-ratio: 1 / 1; border-radius: 6px; overflow: hidden; }
+
+.nav { display: flex; gap: 8px; align-items: center; justify-content: center; margin: 10px 0; }
+.nav .ply { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 18px; }
+.panel h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 12px; }
+.panel h3 { font-size: 15px; margin: 0 0 6px; }
+
+.muted { color: var(--muted); }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); background: var(--panel-2); }
+.pill.zavorione, .pill.svarione { color: var(--bad); border-color: var(--bad); }
+.pill.errore { color: var(--warn); border-color: var(--warn); }
+.pill.imprecisione { color: var(--accent); }
+
+.acc-row { display: flex; gap: 18px; flex-wrap: wrap; }
+.acc-row .big { font-size: 26px; font-weight: 700; }
+.acc-row .lbl { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+
+table.phase { width: 100%; border-collapse: collapse; margin-top: 10px; }
+table.phase td, table.phase th { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+table.phase th { color: var(--muted); font-weight: 500; }
+
+.moment { border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; background: var(--panel-2); cursor: pointer; }
+.moment:hover { border-color: var(--accent); }
+.moment.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.moment .head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.moment .san { font-weight: 700; }
+.moment .best { color: var(--good); }
+.moment .why { color: var(--muted); font-size: 13px; margin-top: 6px; }
+.moment .regola { margin-top: 6px; }
+.moment .regola b { color: var(--accent); }
+
+.variant { display: inline-block; margin: 4px 6px 0 0; padding: 2px 8px; border: 1px dashed var(--line); border-radius: 6px; font-size: 13px; cursor: pointer; }
+.variant:hover { border-color: var(--good); color: var(--good); }
+
+.eval-chart, .time-chart { width: 100%; height: 120px; display: block; }
+.chart-wrap { position: relative; }
+
+.coach-sintesi { font-size: 16px; }
+.train-list li { margin: 4px 0; }
+.error-box { color: var(--bad); background: #2a1a1e; border: 1px solid var(--bad); border-radius: 8px; padding: 10px; }
+.status { color: var(--muted); font-size: 13px; min-height: 18px; }
+
+/* --- FASE 7: tab, profilo cross-partita, puzzle (§7, §7.1) --- */
+.tabs { display: flex; gap: 6px; }
+.tab { background: transparent; border-color: transparent; color: var(--muted); padding: 6px 10px; }
+.tab.active { color: var(--ink); border-color: var(--line); background: var(--panel-2); }
+
+#profileView { padding: 20px; max-width: 1100px; margin: 0 auto; }
+#profileView .panel h2 { font-size: 16px; text-transform: none; letter-spacing: 0; color: var(--ink); }
+
+.badge-rec { color: var(--warn); border-color: var(--warn); margin-left: 6px; }
+
+table.stats { width: 100%; border-collapse: collapse; margin: 8px 0; }
+table.stats td, table.stats th { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+table.stats th { color: var(--muted); font-weight: 500; }
+
+.bar { display: inline-block; height: 8px; border-radius: 4px; background: var(--accent); vertical-align: middle; }
+.bar.warn { background: var(--warn); } .bar.bad { background: var(--bad); } .bar.good { background: var(--good); }
+
+.puzzle-item { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-bottom: 8px; background: var(--panel-2); display: flex; justify-content: space-between; gap: 10px; }
+#puzzleBoard { width: 320px; max-width: 100%; aspect-ratio: 1 / 1; border-radius: 6px; overflow: hidden; }
+.puzzle-result { font-weight: 700; }
+.puzzle-result.ok { color: var(--good); } .puzzle-result.ko { color: var(--bad); }

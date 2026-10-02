@@ -1,0 +1,18 @@
+eco	name	pgn
+A00	Polish Opening	1. b4
+A40	Queen's Pawn Game	1. d4
+A45	Indian Game	1. d4 Nf6
+B00	King's Pawn Opening	1. e4
+B20	Sicilian Defense	1. e4 c5
+B27	Sicilian Defense: Open	1. e4 c5 2. Nf3
+B50	Sicilian Defense: Modern Variations	1. e4 c5 2. Nf3 d6
+C20	King's Pawn Game	1. e4 e5
+C40	King's Knight Opening	1. e4 e5 2. Nf3
+C44	King's Pawn Game: Tayler Opening	1. e4 e5 2. Nf3 Nc6
+C50	Italian Game	1. e4 e5 2. Nf3 Nc6 3. Bc4
+C60	Ruy Lopez	1. e4 e5 2. Nf3 Nc6 3. Bb5
+C65	Ruy Lopez: Berlin Defense	1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6
+D00	Queen's Pawn Game	1. d4 d5
+D06	Queen's Gambit	1. d4 d5 2. c4
+D30	Queen's Gambit Declined	1. d4 d5 2. c4 e6
+E60	King's Indian Defense	1. d4 Nf6 2. c4 g6

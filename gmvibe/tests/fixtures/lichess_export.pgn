@@ -1,0 +1,26 @@
+[Event "Rated blitz game"]
+[Site "https://lichess.org/aaaa1111"]
+[Date "2026.09.01"]
+[White "t1900"]
+[Black "avversario1"]
+[Result "1-0"]
+[TimeControl "300+3"]
+[WhiteElo "1900"]
+[BlackElo "1850"]
+
+1. e4 { [%clk 0:05:00] } 1... e5 { [%clk 0:05:00] } 2. Nf3 { [%clk 0:04:57] }
+2... Nc6 { [%clk 0:04:55] } 3. Bc4 { [%clk 0:04:53] } 3... Bc5 { [%clk 0:04:50] }
+4. d3 { [%clk 0:04:48] } 4... Nf6 { [%clk 0:04:45] } 1-0
+
+[Event "Rated rapid game"]
+[Site "https://lichess.org/bbbb2222"]
+[Date "2026.09.02"]
+[White "avversario2"]
+[Black "t1900"]
+[Result "0-1"]
+[TimeControl "600+0"]
+[WhiteElo "1880"]
+[BlackElo "1900"]
+
+1. d4 { [%clk 0:10:00] } 1... d5 { [%clk 0:10:00] } 2. c4 { [%clk 0:09:55] }
+2... e6 { [%clk 0:09:50] } 3. Nc3 { [%clk 0:09:45] } 3... Nf6 { [%clk 0:09:40] } 0-1

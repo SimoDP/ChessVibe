@@ -1,0 +1,15 @@
+[Event "GM-Vibe endgame fixture"]
+[Site "Test"]
+[Date "2026.10.02"]
+[Round "4"]
+[White "BiancoTest"]
+[Black "NeroTest"]
+[Result "*"]
+[WhiteElo "1900"]
+[BlackElo "1850"]
+[TimeControl "300+0"]
+[SetUp "1"]
+[FEN "8/8/4k3/8/8/8/4P3/R5K1 w - - 0 1"]
+
+1. Kf2 { [%clk 0:04:40] } 1... Kd6 { [%clk 0:04:30] } 2. Ke3 { [%clk 0:04:20] } 2... Kc5 { [%clk 0:04:10] } 3. Ra8 { [%clk 0:04:05] } 3... Kb4 { [%clk 0:04:00] } *
+
